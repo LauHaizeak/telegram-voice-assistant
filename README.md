@@ -16,7 +16,18 @@ Un bot Telegram personnel : tu lui envoies un vocal depuis ton téléphone, il l
 Commandes : `/start` (aide + agenda du jour), `/agenda`, `/demain`, `/semaine`, `/notes` (lien vers le doc).
 Les messages texte marchent aussi, pratique pour tester.
 
-## Installation (une seule fois)
+## Installation rapide
+
+1. Télécharge le projet : bouton vert **Code → Download ZIP** sur GitHub, puis dézippe-le.
+2. Double-clique sur **`Lancer-assistant.bat`** (Windows) ou lance `./lancer-assistant.sh` (Linux).
+
+L'installateur installe Python si besoin et toutes les dépendances. Ensuite, il te guide pour les deux seules étapes qui demandent ton compte :
+- **Telegram** : il ouvre @BotFather, tu crées le bot et tu colles le jeton. Puis tu envoies un message à ton bot, et il retient automatiquement que c'est toi.
+- **Google** : il ouvre les cinq pages de la console Google une par une, récupère tout seul le fichier JSON téléchargé, puis ouvre la page « Autoriser ».
+
+Ensuite le bot démarre. Les fois suivantes, le même double-clic lance directement le bot.
+
+## Installation manuelle (détails)
 
 ### 1. Python et dépendances
 
