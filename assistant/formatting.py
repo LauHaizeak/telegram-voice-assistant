@@ -16,8 +16,9 @@ HELP = (
     "• « Note qu'il faut racheter des piles »\n"
     "• « Qu'est-ce que j'ai cette semaine ? »\n"
     "• « Résume-moi le dernier mail de ma boîte pro »\n"
-    "• « Envoie un mail à Paul pour lui dire que je serai en retard » (rien ne part sans ton accord)\n\n"
-    "Commandes : /agenda, /demain, /semaine, /notes, /mails"
+    "• « Envoie un mail à Paul pour lui dire que je serai en retard » (rien ne part sans ton accord)\n"
+    "• « Ajoute du lait à ma liste de courses »\n\n"
+    "Commandes : /agenda, /demain, /semaine, /notes, /mails, /courses"
 )
 
 

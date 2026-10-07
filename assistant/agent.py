@@ -14,6 +14,7 @@ from .contacts_service import ContactsService
 from .mail_service import MailService
 from .notes_service import NotesService
 from .sms_service import SmsService
+from .tasks_service import TasksService
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +66,16 @@ TOOLS = [
            "nom": {"type": "string", "description": "Nom du destinataire"},
            "texte": {"type": "string"}},
           ["numero", "texte"]),
+    _tool("gerer_liste",
+          "Gère les listes Google Tasks de Kevin (liste de courses par défaut, ou toute autre liste nommée). "
+          "« ajouter » ignore les articles déjà présents ; « afficher » montre la liste avec des boutons pour "
+          "cocher ; « cocher » marque des articles comme achetés ou faits ; « retirer » les supprime (erreur, "
+          "changement d'avis) ; « vider » coche tout ce qui reste.",
+          {"action": {"type": "string", "enum": ["ajouter", "afficher", "cocher", "retirer", "vider"]},
+           "liste": {"type": "string", "description": "Nom de la liste, « Courses » par défaut"},
+           "articles": {"type": "array", "items": {"type": "string"},
+                        "description": "Un article par élément, au singulier ou tel que dit, ex. ['lait', 'piles AA']"}},
+          ["action"]),
     _tool("gerer_mails",
           "Agit sur des mails déjà trouvés avec chercher_mails, désignés par leurs références (M1, M2…). "
           "« corbeille » demande d'abord la confirmation de Kevin avec un bouton (récupérable 30 jours dans "
@@ -107,6 +118,7 @@ class AgentReply:
     mail_draft: dict | None = None
     mails_to_trash: list[dict] = field(default_factory=list)
     sms_draft: dict | None = None
+    list_shown: tuple[str, list] | None = None
 
 
 class Agent:
@@ -114,7 +126,9 @@ class Agent:
 
     def __init__(self, calendar: CalendarService, notes: NotesService, mail: MailService,
                  addresses: list[str], tz, model: str,
-                 contacts: ContactsService | None = None, sms: SmsService | None = None) -> None:
+                 contacts: ContactsService | None = None, sms: SmsService | None = None,
+                 tasks: TasksService | None = None) -> None:
+        self.tasks = tasks
         self.calendar = calendar
         self.notes = notes
         self.mail = mail
@@ -258,6 +272,8 @@ class Agent:
                     "Montre-lui le destinataire, l'objet et le texte, et dis-lui d'appuyer sur Envoyer.")
         if name == "gerer_mails":
             return self._manage_mails(args, reply)
+        if name == "gerer_liste":
+            return self._manage_list(args, reply)
         if name == "chercher_contact":
             if not self.contacts:
                 return "Les contacts Google ne sont pas connectés."
@@ -277,6 +293,38 @@ class Agent:
             return ("SMS prêt, en attente de la confirmation de Kevin. Montre-lui le destinataire et le texte, "
                     "et dis-lui d'appuyer sur Envoyer.")
         return f"Outil inconnu : {name}"
+
+    def _manage_list(self, args: dict, reply: AgentReply) -> str:
+        if not self.tasks:
+            return "Les listes Google Tasks ne sont pas connectées."
+        name = (args.get("liste") or "").strip() or "Courses"
+        articles = [a for a in args.get("articles") or [] if a.strip()]
+        action = args.get("action")
+        if action == "ajouter":
+            added, skipped = self.tasks.add(name, articles)
+            return (f"Ajouté à « {name} » : {', '.join(added) or 'rien'}."
+                    + (f" Déjà sur la liste : {', '.join(skipped)}." if skipped else ""))
+        if action == "afficher":
+            items = self.tasks.items(name)
+            reply.list_shown = (name, items)
+            if not items:
+                return f"La liste « {name} » est vide."
+            return (f"Liste « {name} » ({len(items)}) : " + ", ".join(i.title for i in items)
+                    + ". Des boutons pour cocher s'affichent sous ta réponse : ne recopie pas toute la liste "
+                      "si elle est longue, donne juste le nombre d'articles et les principaux.")
+        if action == "vider":
+            items = self.tasks.items(name)
+            for i in items:
+                self.tasks.complete(name, i.id)
+            return f"{len(items)} article(s) cochés, la liste « {name} » est vide."
+        if action in ("cocher", "retirer"):
+            found, missing = self.tasks.match(name, articles)
+            for i in found:
+                (self.tasks.complete if action == "cocher" else self.tasks.delete)(name, i.id)
+            verb = "Coché" if action == "cocher" else "Retiré"
+            return (f"{verb} : {', '.join(i.title for i in found) or 'rien'}."
+                    + (f" Pas sur la liste : {', '.join(missing)}." if missing else ""))
+        return f"Action inconnue : {action}"
 
     def _manage_mails(self, args: dict, reply: AgentReply) -> str:
         refs = [r.strip().upper() for r in args.get("references") or []]

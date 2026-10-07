@@ -16,18 +16,24 @@ SCOPES = [
     "https://www.googleapis.com/auth/contacts.readonly",
     "https://www.googleapis.com/auth/contacts.other.readonly",
 ]
+# Droits demandés seulement pour la boîte principale (première de GMAIL_ADDRESSES)
+PRIMARY_SCOPES = [
+    "https://www.googleapis.com/auth/tasks",
+]
 
 
 def token_path(data_dir: Path, email: str) -> Path:
     return data_dir / f"token_{email}.json"
 
 
-def load_credentials(credentials_file: Path, data_dir: Path, email: str, interactive: bool = False) -> Credentials:
+def load_credentials(credentials_file: Path, data_dir: Path, email: str, interactive: bool = False,
+                     primary: bool = False) -> Credentials:
     """Jeton OAuth de la boîte `email`, rafraîchi si besoin ; `interactive` ouvre la page Google."""
+    scopes = SCOPES + PRIMARY_SCOPES if primary else SCOPES
     token_file = token_path(data_dir, email)
     granted = set(json.loads(token_file.read_text(encoding="utf-8")).get("scopes", [])) if token_file.exists() else set()
-    if granted >= set(SCOPES):
-        creds = Credentials.from_authorized_user_file(str(token_file), SCOPES)
+    if granted >= set(scopes):
+        creds = Credentials.from_authorized_user_file(str(token_file), scopes)
         if creds.valid:
             return creds
         if creds.refresh_token:
@@ -41,7 +47,7 @@ def load_credentials(credentials_file: Path, data_dir: Path, email: str, interac
         raise SystemExit(f"Connexion Google absente ou à renouveler pour {email}. Lance : python scripts/google_login.py")
     if not credentials_file.exists():
         raise SystemExit(f"Fichier OAuth introuvable : {credentials_file} (voir README).")
-    flow = InstalledAppFlow.from_client_secrets_file(str(credentials_file), SCOPES)
+    flow = InstalledAppFlow.from_client_secrets_file(str(credentials_file), scopes)
     creds = flow.run_local_server(port=0, login_hint=email)
     token_file.parent.mkdir(parents=True, exist_ok=True)
     token_file.write_text(creds.to_json(), encoding="utf-8")

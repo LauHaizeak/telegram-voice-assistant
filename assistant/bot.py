@@ -77,6 +77,7 @@ class Assistant:
         self.pending_trash: dict[str, list[dict]] = {}
         self.sms = sms
         self.pending_sms: dict[str, dict] = {}
+        self.shown_lists: dict[str, tuple[str, dict]] = {}
 
     def now(self) -> datetime:
         return datetime.now(self.config.timezone)
@@ -99,6 +100,8 @@ class Assistant:
         app.add_handler(CallbackQueryHandler(self.on_confirm_send, pattern=r"^(send|drop)_mail:"))
         app.add_handler(CallbackQueryHandler(self.on_confirm_trash, pattern=r"^(trash|keep)_mails:"))
         app.add_handler(CallbackQueryHandler(self.on_confirm_sms, pattern=r"^(send|drop)_sms:"))
+        app.add_handler(CallbackQueryHandler(self.on_tick, pattern=r"^tick:"))
+        app.add_handler(CommandHandler("courses", self.on_shopping_list, filters=allowed))
         app.add_handler(MessageHandler(filters.ALL, self.on_unauthorized))
         return app
 
@@ -201,6 +204,8 @@ class Assistant:
             self.pending_sms[sms_id] = reply.sms_draft
             buttons.append([InlineKeyboardButton("📱 Envoyer le SMS", callback_data=f"send_sms:{sms_id}"),
                             InlineKeyboardButton("Ne pas envoyer", callback_data=f"drop_sms:{sms_id}")])
+        if reply.list_shown and reply.list_shown[1]:
+            buttons += self._tick_buttons(*reply.list_shown)
         if reply.mails_to_trash:
             trash_id = uuid.uuid4().hex[:12]
             self.pending_trash[trash_id] = reply.mails_to_trash
@@ -295,6 +300,40 @@ class Assistant:
             await query.answer("❌ Erreur envoi")
             await query.edit_message_text(query.message.text + "\n\n❌ Erreur lors de l'envoi")
 
+
+    def _tick_buttons(self, list_name: str, items: list) -> list[list[InlineKeyboardButton]]:
+        list_id = uuid.uuid4().hex[:8]
+        self.shown_lists[list_id] = (list_name, {str(n): i for n, i in enumerate(items)})
+        return [[InlineKeyboardButton(f"✅ {i.title}"[:60], callback_data=f"tick:{list_id}:{n}")]
+                for n, i in enumerate(items[:30])]
+
+    async def on_shopping_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        items = await asyncio.to_thread(self.agent.tasks.items, "Courses")
+        if not items:
+            await update.message.reply_text("🛒 La liste de courses est vide.")
+            return
+        await update.message.reply_text(f"🛒 Courses ({len(items)}) : appuie sur un article pour le cocher.",
+                                        reply_markup=InlineKeyboardMarkup(self._tick_buttons("Courses", items)))
+
+    async def on_tick(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query.from_user.id not in self.config.allowed_user_ids:
+            await query.answer()
+            return
+        _, list_id, n = query.data.split(":", 2)
+        shown = self.shown_lists.get(list_id)
+        item = shown[1].pop(n, None) if shown else None
+        if item is None:
+            await query.answer("Déjà coché")
+            return
+        await asyncio.to_thread(self.agent.tasks.complete, shown[0], item.id)
+        await query.answer(f"Coché : {item.title}")
+        remaining = [[b for b in row if b.callback_data != query.data] for row in query.message.reply_markup.inline_keyboard]
+        remaining = [row for row in remaining if row]
+        if not shown[1]:
+            await query.edit_message_text(query.message.text + f"\n\n🎉 Tout est coché sur « {shown[0]} ».")
+        else:
+            await query.edit_message_reply_markup(InlineKeyboardMarkup(remaining))
 
     async def on_confirm_sms(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query

@@ -13,8 +13,9 @@ Tout tourne sur ton PC : Whisper transcrit ta voix, une IA locale (Ollama) compr
 - **SMS** : « Envoie un SMS à Paul pour lui dire que j'arrive ». Le SMS part de ton téléphone Android, après le bouton **Envoyer le SMS**.
 - **Agenda** : « Qu'est-ce que j'ai jeudi ? », « Mets-moi un rdv chez le coiffeur jeudi prochain vers 11h ». Chaque ajout a un bouton **Annuler**.
 - **Notes** : « Note qu'il faut racheter des piles ».
+- **Liste de courses** (Google Tasks) : « Ajoute du lait et des piles », « Qu'est-ce qu'il y a sur ma liste ? », « J'ai pris le pain », « Enlève les piles », « Vide la liste ». Pas de doublon, et un bouton ✅ par article pour cocher. `/courses` affiche la liste. Les autres listes Google Tasks se gèrent pareil, en les nommant.
 - **Réponse vocale** : il répond en vocal à tes vocaux et par écrit à tes messages écrits. Les boutons de confirmation restent en texte sous le vocal. `/vocal` force le vocal, `/texte` force l'écrit, `/auto` revient au réglage normal.
-- **Commandes** : `/agenda`, `/demain`, `/semaine`, `/notes`, `/mails`, `/vocal`, `/texte`, `/auto`.
+- **Commandes** : `/agenda`, `/demain`, `/semaine`, `/notes`, `/mails`, `/courses`, `/vocal`, `/texte`, `/auto`.
 
 Compte 5 à 20 secondes par réponse. Après 5 minutes sans demande, l'IA, Whisper et la voix se déchargent, et la réponse suivante prend un peu plus longtemps.
 
@@ -23,7 +24,7 @@ Compte 5 à 20 secondes par réponse. Après 5 minutes sans demande, l'IA, Whisp
 1. Télécharge le projet et dézippe-le.
 2. Double-clique sur **`Lancer-assistant.bat`**. Il installe Python, Ollama et les dépendances, puis te guide pour :
    - créer le bot Telegram avec @BotFather ;
-   - activer les API Google (Agenda, Docs, Gmail, People) et ajouter tes adresses en « utilisateurs test » ;
+   - activer les API Google (Agenda, Docs, Gmail, People, Tasks) et ajouter tes adresses en « utilisateurs test » ;
    - donner tes adresses Gmail (la première sert aussi pour l'agenda et les notes) ;
    - autoriser chaque boîte, une page Google par adresse.
 3. Télécharge le modèle d'IA une fois : `ollama pull qwen3.8:27b`. Tu peux aussi mettre le nom d'un modèle déjà installé dans `OLLAMA_MODEL` du `.env`.
@@ -52,7 +53,7 @@ Fait :
 - Vocaux transcrits en local (Whisper large-v3 sur la carte graphique).
 - IA locale (Qwen 3.8 via Ollama) qui comprend les demandes libres et choisit elle-même les outils. Les règles fixes ne servent qu'en secours si Ollama ne répond pas.
 - Gmail sur plusieurs boîtes : lire, résumer, chercher, envoyer, corbeille, archiver, marquer lu.
-- Google Agenda, notes Google Docs, Google Contacts.
+- Google Agenda, notes Google Docs, Google Contacts, listes Google Tasks (courses).
 - SMS depuis le téléphone Android, en local.
 - Réponses vocales en français (Piper).
 - Mémoire de conversation pendant 30 minutes.

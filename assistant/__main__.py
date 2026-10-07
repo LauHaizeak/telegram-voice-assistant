@@ -9,6 +9,7 @@ from .google_auth import load_credentials
 from .mail_service import MailService
 from .notes_service import NotesService
 from .sms_service import SmsService
+from .tasks_service import TasksService
 from .transcribe import Transcriber
 from .voice import Speaker
 
@@ -16,12 +17,12 @@ from .voice import Speaker
 def build_services():
     config = load_config()
     creds = {}
+    primary = config.gmail_addresses[0]
     for email in config.gmail_addresses:
         try:
-            creds[email] = load_credentials(config.google_credentials_file, DATA_DIR, email)
+            creds[email] = load_credentials(config.google_credentials_file, DATA_DIR, email, primary=email == primary)
         except SystemExit as e:
             logging.warning("%s", e)
-    primary = config.gmail_addresses[0]
     if primary not in creds:
         raise SystemExit(f"Pas de connexion Google pour {primary}. Lance : python scripts/google_login.py")
 
@@ -31,7 +32,7 @@ def build_services():
     mail = MailService(creds, config.gmail_addresses)
     sms = SmsService(config.sms_gateway_url, config.sms_gateway_user, config.sms_gateway_password)
     agent = Agent(calendar, notes, mail, list(config.gmail_addresses), config.timezone, config.ollama_model,
-                  contacts=ContactsService(creds), sms=sms)
+                  contacts=ContactsService(creds), sms=sms, tasks=TasksService(creds[primary]))
     return config, calendar, notes, mail, agent, sms
 
 
