@@ -228,7 +228,7 @@ class Agent:
 
     def _chat(self, messages: list[dict]) -> dict | None:
         self._fit_context(messages)
-        for attempt in range(2):
+        for _ in range(2):
             try:
                 r = requests.post(OLLAMA_CHAT_URL, json={
                     "model": self.model, "messages": messages, "tools": TOOLS, "stream": False, "think": False,

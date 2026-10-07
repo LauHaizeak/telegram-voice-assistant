@@ -25,9 +25,6 @@ class TasksService:
         self._api = build("tasks", "v1", credentials=creds, cache_discovery=False)
         self._list_ids: dict[str, str] = {}
 
-    def list_names(self) -> list[str]:
-        return [tl["title"] for tl in self._api.tasklists().list(maxResults=100).execute().get("items", [])]
-
     def _list_id(self, name: str) -> str:
         key = _key(name)
         if key not in self._list_ids:

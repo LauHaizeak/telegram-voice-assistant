@@ -15,7 +15,6 @@ class Email:
     id: str
     sender: str
     subject: str
-    snippet: str
     timestamp: datetime
     is_read: bool
 
@@ -23,8 +22,7 @@ class Email:
 class MailService:
     """Plusieurs boîtes Gmail, chacune avec son propre jeton OAuth."""
 
-    def __init__(self, creds_by_address: dict[str, Credentials], addresses: tuple[str, ...]) -> None:
-        self._addresses = addresses
+    def __init__(self, creds_by_address: dict[str, Credentials]) -> None:
         self._apis = {address: build("gmail", "v1", credentials=creds, cache_discovery=False)
                       for address, creds in creds_by_address.items()}
 
@@ -83,7 +81,6 @@ class MailService:
             id=message_id,
             sender=headers.get("from", "Inconnu"),
             subject=headers.get("subject", "(sans objet)"),
-            snippet=msg.get("snippet", ""),
             timestamp=datetime.fromtimestamp(int(msg.get("internalDate", 0)) / 1000),
             is_read="UNREAD" not in msg.get("labelIds", []),
         )

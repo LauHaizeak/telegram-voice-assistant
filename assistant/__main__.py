@@ -29,7 +29,7 @@ def build_services():
     # L'agenda et les notes utilisent la première adresse de GMAIL_ADDRESSES
     calendar = CalendarService(creds[primary], config.calendar_id, config.timezone)
     notes = NotesService(creds[primary], config.notes_doc_id, state_file())
-    mail = MailService(creds, config.gmail_addresses)
+    mail = MailService(creds)
     sms = SmsService(config.sms_gateway_url, config.sms_gateway_user, config.sms_gateway_password)
     agent = Agent(calendar, notes, mail, list(config.gmail_addresses), config.timezone, config.ollama_model,
                   contacts=ContactsService(creds), sms=sms, tasks=TasksService(creds[primary]))

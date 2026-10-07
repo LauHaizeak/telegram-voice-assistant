@@ -25,7 +25,6 @@ class Contact:
     name: str
     emails: list[str]
     phones: list[str]
-    source: str
 
 
 class ContactsService:
@@ -53,7 +52,6 @@ class ContactsService:
                     name=(person.get("names") or [{}])[0].get("displayName", ""),
                     emails=[e["value"] for e in person.get("emailAddresses", [])],
                     phones=[p.get("canonicalForm") or p["value"] for p in person.get("phoneNumbers", [])],
-                    source=address,
                 )
                 key = (contact.name.lower(), tuple(contact.emails), tuple(contact.phones))
                 found.setdefault(key, contact)
