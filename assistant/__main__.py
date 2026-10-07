@@ -4,9 +4,11 @@ from .agent import Agent
 from .bot import Assistant, state_file
 from .calendar_service import CalendarService
 from .config import DATA_DIR, load_config
+from .contacts_service import ContactsService
 from .google_auth import load_credentials
 from .mail_service import MailService
 from .notes_service import NotesService
+from .sms_service import SmsService
 from .transcribe import Transcriber
 
 
@@ -26,8 +28,10 @@ def build_services():
     calendar = CalendarService(creds[primary], config.calendar_id, config.timezone)
     notes = NotesService(creds[primary], config.notes_doc_id, state_file())
     mail = MailService(creds, config.gmail_addresses)
-    agent = Agent(calendar, notes, mail, list(config.gmail_addresses), config.timezone, config.ollama_model)
-    return config, calendar, notes, mail, agent
+    sms = SmsService(config.sms_gateway_url, config.sms_gateway_user, config.sms_gateway_password)
+    agent = Agent(calendar, notes, mail, list(config.gmail_addresses), config.timezone, config.ollama_model,
+                  contacts=ContactsService(creds), sms=sms)
+    return config, calendar, notes, mail, agent, sms
 
 
 def main() -> None:
@@ -36,10 +40,11 @@ def main() -> None:
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    config, calendar, notes, mail, agent = build_services()
+    config, calendar, notes, mail, agent, sms = build_services()
     transcriber = Transcriber(config.whisper_model, config.whisper_device, config.whisper_compute_type)
-    assistant = Assistant(config, transcriber, calendar, notes, mail, agent)
-    logging.info("Bot démarré (IA : %s). Ctrl+C pour arrêter.", config.ollama_model)
+    assistant = Assistant(config, transcriber, calendar, notes, mail, agent, sms)
+    logging.info("Bot démarré (IA : %s, SMS : %s). Ctrl+C pour arrêter.",
+                 config.ollama_model, "oui" if sms.configured else "non configuré")
     assistant.build_app().run_polling()
 
 

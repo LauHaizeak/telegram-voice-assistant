@@ -10,8 +10,10 @@ from datetime import date, datetime, time, timedelta
 import requests
 
 from .calendar_service import CalendarService
+from .contacts_service import ContactsService
 from .mail_service import MailService
 from .notes_service import NotesService
+from .sms_service import SmsService
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +54,17 @@ TOOLS = [
            "destinataire": {"type": "string", "description": "Adresse mail du destinataire"},
            "objet": {"type": "string"}, "corps": {"type": "string"}},
           ["destinataire", "objet", "corps"]),
+    _tool("chercher_contact",
+          "Cherche une personne dans les contacts Google de Kevin (toutes ses boîtes) et renvoie son nom, "
+          "ses adresses mail et ses numéros de téléphone.",
+          {"nom": {"type": "string", "description": "Prénom, nom ou surnom tel que Kevin l'a dit"}}, ["nom"]),
+    _tool("envoyer_sms",
+          "Prépare un SMS envoyé depuis le téléphone de Kevin. Le SMS n'est PAS envoyé : Kevin devra "
+          "confirmer avec un bouton.",
+          {"numero": {"type": "string", "description": "Numéro au format international, par exemple +33612345678"},
+           "nom": {"type": "string", "description": "Nom du destinataire"},
+           "texte": {"type": "string"}},
+          ["numero", "texte"]),
     _tool("gerer_mails",
           "Agit sur des mails déjà trouvés avec chercher_mails, désignés par leurs références (M1, M2…). "
           "« corbeille » demande d'abord la confirmation de Kevin avec un bouton (récupérable 30 jours dans "
@@ -85,16 +98,20 @@ class AgentReply:
     events_added: list[str] = field(default_factory=list)
     mail_draft: dict | None = None
     mails_to_trash: list[dict] = field(default_factory=list)
+    sms_draft: dict | None = None
 
 
 class Agent:
     """Une seule conversation (Kevin), oubliée après 30 min sans message."""
 
     def __init__(self, calendar: CalendarService, notes: NotesService, mail: MailService,
-                 addresses: list[str], tz, model: str) -> None:
+                 addresses: list[str], tz, model: str,
+                 contacts: ContactsService | None = None, sms: SmsService | None = None) -> None:
         self.calendar = calendar
         self.notes = notes
         self.mail = mail
+        self.contacts = contacts
+        self.sms = sms
         self.addresses = addresses
         self.tz = tz
         self.model = model
@@ -122,9 +139,10 @@ class Agent:
             "Tu te souviens des échanges récents : « ce mail », « celui d'avant », « les deux premiers » "
             "désignent des mails déjà trouvés, utilise leurs références M1, M2… sans refaire de recherche. "
             "Ne montre pas ces références à Kevin.\n"
-            "N'invente jamais d'adresse mail. Si tu ne connais pas l'adresse du destinataire, cherche-la "
-            "d'abord dans ses mails (chercher_mails avec 'from:prénom' ou 'to:prénom'), et demande-la seulement "
-            "si tu ne la trouves pas.\n"
+            "N'invente jamais d'adresse mail ni de numéro. Pour écrire à quelqu'un, cherche-le d'abord avec "
+            "chercher_contact, puis si besoin dans ses mails (chercher_mails avec 'from:prénom' ou 'to:prénom'). "
+            "S'il y a plusieurs personnes possibles, demande laquelle ; si tu ne trouves rien, demande l'adresse "
+            "ou le numéro. Un SMS part toujours vers un numéro de mobile.\n"
             "Ta réponse est lue dans Telegram : texte simple, sans astérisques, sans titres ni mise en forme "
             "Markdown, avec au plus quelques tirets.\n"
             "Si la demande n'a rien à voir avec tes outils, réponds simplement."
@@ -214,6 +232,24 @@ class Agent:
                     "Montre-lui le destinataire, l'objet et le texte, et dis-lui d'appuyer sur Envoyer.")
         if name == "gerer_mails":
             return self._manage_mails(args, reply)
+        if name == "chercher_contact":
+            if not self.contacts:
+                return "Les contacts Google ne sont pas connectés."
+            people = self.contacts.search(args["nom"])
+            if not people:
+                return f"Aucun contact trouvé pour « {args['nom']} »."
+            lines = "\n".join(f"- {c.name or '(sans nom)'} | mails : {', '.join(c.emails) or 'aucun'} | "
+                              f"téléphones : {', '.join(c.phones) or 'aucun'}" for c in people)
+            if len(people) > 1:
+                lines += ("\nPlusieurs correspondances : ne choisis pas toi-même, montre-les à Kevin "
+                          "(nom et adresse ou numéro) et demande-lui laquelle utiliser.")
+            return lines
+        if name == "envoyer_sms":
+            if not self.sms or not self.sms.configured:
+                return "L'envoi de SMS n'est pas encore configuré (application du téléphone). Dis-le à Kevin."
+            reply.sms_draft = {"numero": args["numero"], "nom": args.get("nom") or "", "texte": args["texte"]}
+            return ("SMS prêt, en attente de la confirmation de Kevin. Montre-lui le destinataire et le texte, "
+                    "et dis-lui d'appuyer sur Envoyer.")
         return f"Outil inconnu : {name}"
 
     def _manage_mails(self, args: dict, reply: AgentReply) -> str:

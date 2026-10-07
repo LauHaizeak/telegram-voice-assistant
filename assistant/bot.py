@@ -26,6 +26,7 @@ from .formatting import HELP, format_agenda, format_day, format_time
 from .intents import Intent, IntentType, parse
 from .mail_service import MailService
 from .notes_service import NotesService
+from .sms_service import SmsService
 from .transcribe import Transcriber
 
 log = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class Assistant:
         notes: NotesService,
         mail: MailService,
         agent: Agent,
+        sms: SmsService,
     ) -> None:
         self.config = config
         self.transcriber = transcriber
@@ -49,6 +51,8 @@ class Assistant:
         self.agent = agent
         self.pending_mails: dict[str, dict] = {}
         self.pending_trash: dict[str, list[dict]] = {}
+        self.sms = sms
+        self.pending_sms: dict[str, dict] = {}
 
     def now(self) -> datetime:
         return datetime.now(self.config.timezone)
@@ -68,6 +72,7 @@ class Assistant:
         app.add_handler(CallbackQueryHandler(self.on_cancel, pattern=r"^cancel:"))
         app.add_handler(CallbackQueryHandler(self.on_confirm_send, pattern=r"^(send|drop)_mail:"))
         app.add_handler(CallbackQueryHandler(self.on_confirm_trash, pattern=r"^(trash|keep)_mails:"))
+        app.add_handler(CallbackQueryHandler(self.on_confirm_sms, pattern=r"^(send|drop)_sms:"))
         app.add_handler(MessageHandler(filters.ALL, self.on_unauthorized))
         return app
 
@@ -151,6 +156,11 @@ class Assistant:
             self.pending_mails[draft_id] = reply.mail_draft
             buttons.append([InlineKeyboardButton("✉️ Envoyer", callback_data=f"send_mail:{draft_id}"),
                             InlineKeyboardButton("Ne pas envoyer", callback_data=f"drop_mail:{draft_id}")])
+        if reply.sms_draft:
+            sms_id = uuid.uuid4().hex[:12]
+            self.pending_sms[sms_id] = reply.sms_draft
+            buttons.append([InlineKeyboardButton("📱 Envoyer le SMS", callback_data=f"send_sms:{sms_id}"),
+                            InlineKeyboardButton("Ne pas envoyer", callback_data=f"drop_sms:{sms_id}")])
         if reply.mails_to_trash:
             trash_id = uuid.uuid4().hex[:12]
             self.pending_trash[trash_id] = reply.mails_to_trash
@@ -235,6 +245,33 @@ class Assistant:
             await query.answer("❌ Erreur envoi")
             await query.edit_message_text(query.message.text + "\n\n❌ Erreur lors de l'envoi")
 
+
+    async def on_confirm_sms(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query.from_user.id not in self.config.allowed_user_ids:
+            await query.answer()
+            return
+        action, sms_id = query.data.split(":", 1)
+        draft = self.pending_sms.pop(sms_id, None)
+        if draft is None:
+            await query.answer("Déjà traité")
+            await query.edit_message_reply_markup(None)
+            return
+        if action == "drop_sms":
+            await query.answer("Pas envoyé")
+            await query.edit_message_text(query.message.text + "\n\n🗑️ SMS non envoyé.")
+            return
+        await query.answer("Envoi…")
+        try:
+            state = await asyncio.to_thread(self.sms.send, draft["numero"], draft["texte"])
+        except Exception:
+            log.exception("Erreur SMS")
+            await query.edit_message_text(
+                query.message.text + "\n\n❌ SMS non envoyé : le téléphone ne répond pas (même Wi-Fi ? appli ouverte ?).")
+            return
+        labels = {"Sent": "✅ SMS envoyé", "Delivered": "✅ SMS reçu par le destinataire",
+                  "Failed": "❌ Le téléphone n'a pas pu envoyer le SMS"}
+        await query.edit_message_text(query.message.text + "\n\n" + labels.get(state, f"⏳ SMS en cours ({state})"))
 
     async def on_confirm_trash(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query

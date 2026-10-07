@@ -26,7 +26,7 @@ def main() -> None:
     import logging
     logging.basicConfig(format="   [outil] %(message)s", level=logging.WARNING)
     logging.getLogger("assistant.agent").setLevel(logging.INFO)
-    config, calendar, notes, mail, agent = build_services()
+    config, calendar, notes, mail, agent, _ = build_services()
     calendar.create_event = lambda title, day, start, duration: (
         print(f"   [simulé] agenda : {title} {day} {start} {duration}") or SimpleNamespace(id="test"))
     notes.add_note = lambda text, when: print(f"   [simulé] note : {text}")

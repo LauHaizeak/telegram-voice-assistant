@@ -8,6 +8,8 @@ Tout tourne sur ton PC : Whisper transcrit la voix et une IA locale (Ollama) com
 
 - **Mails** : « Résume-moi le dernier mail de ma boîte pro », « Quelqu'un m'a écrit pour une facture ? », « Fais-moi un point sur mes non lus ».
 - **Envoyer un mail** : « Envoie un mail à Paul pour lui dire que je serai en retard ». Il retrouve l'adresse dans tes mails et rédige le texte. Le mail ne part que si tu appuies sur **Envoyer**.
+- **Contacts** : il trouve les gens dans tes contacts Google (« le numéro de Paul ? »). Si plusieurs personnes correspondent, il te demande laquelle.
+- **SMS** : « Envoie un SMS à Paul pour lui dire que j'arrive ». Il part de ton téléphone Android via l'application SMS Gateway for Android en mode local, sur le même Wi-Fi que le PC. Rien ne part sans le bouton **Envoyer le SMS**. À régler dans `.env` : `SMS_GATEWAY_URL`, `SMS_GATEWAY_USER`, `SMS_GATEWAY_PASSWORD`.
 - **Ranger ses mails** : « Supprime-le », « Archive les deux premiers », « Marque-le comme lu ». Il se souvient des mails dont il vient de parler. La suppression met le mail à la corbeille Gmail, où il reste récupérable 30 jours, et demande d'abord ton accord par un bouton.
 - **Agenda** : « Qu'est-ce que j'ai jeudi ? », « Mets-moi un rdv chez le coiffeur jeudi prochain vers 11h ». Chaque ajout a un bouton **Annuler**.
 - **Notes** : « Note qu'il faut racheter des piles ».

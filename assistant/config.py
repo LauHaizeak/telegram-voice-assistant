@@ -24,6 +24,9 @@ class Config:
     google_credentials_file: Path
     gmail_addresses: tuple[str, ...]
     ollama_model: str
+    sms_gateway_url: str
+    sms_gateway_user: str
+    sms_gateway_password: str
 
 
 def load_config() -> Config:
@@ -53,4 +56,7 @@ def load_config() -> Config:
         google_credentials_file=ROOT / os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json"),
         gmail_addresses=gmail_addrs,
         ollama_model=os.getenv("OLLAMA_MODEL", "qwen3.8:27b"),
+        sms_gateway_url=os.getenv("SMS_GATEWAY_URL", "").strip(),
+        sms_gateway_user=os.getenv("SMS_GATEWAY_USER", "sms").strip(),
+        sms_gateway_password=os.getenv("SMS_GATEWAY_PASSWORD", "").strip(),
     )
