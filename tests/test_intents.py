@@ -90,3 +90,31 @@ def test_read_agenda(text, day, span):
 
 def test_unknown():
     assert parse("Quel temps fait-il ?", NOW).type is IntentType.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Lis mes mails",
+        "Montre-moi mes mails non lus",
+        "Qu'est-ce que j'ai comme emails",
+        "Check mes mails",
+        "Donne-moi un résumé de mes messages",
+    ],
+)
+def test_read_mail(text):
+    intent = parse(text, NOW)
+    assert intent.type is IntentType.READ_MAIL
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Envoie un mail",
+        "Envoie un email",
+        "Envoyer un message",
+    ],
+)
+def test_send_mail(text):
+    intent = parse(text, NOW)
+    assert intent.type is IntentType.SEND_MAIL

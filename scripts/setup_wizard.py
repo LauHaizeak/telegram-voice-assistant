@@ -13,10 +13,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 ENV_FILE = ROOT / ".env"
 CREDENTIALS = ROOT / "credentials.json"
-TOKEN = ROOT / "data" / "token.json"
 
 GOOGLE_STEPS = [
     ("Créer un projet Google Cloud (nom libre, ex. « Assistant vocal »)",
@@ -25,7 +25,9 @@ GOOGLE_STEPS = [
      "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"),
     ("Activer l'API Google Docs (bouton « Activer »)",
      "https://console.cloud.google.com/apis/library/docs.googleapis.com"),
-    ("Écran de consentement : type « Externe », puis ajoute ton adresse Gmail dans « Utilisateurs test »",
+    ("Activer l'API Gmail (bouton « Activer »)",
+     "https://console.cloud.google.com/apis/library/gmail.googleapis.com"),
+    ("Écran de consentement : type « Externe », puis ajoute toutes tes adresses Gmail dans « Utilisateurs test »",
      "https://console.cloud.google.com/apis/credentials/consent"),
     ("Créer un ID client OAuth de type « Application de bureau », puis cliquer « Télécharger JSON »",
      "https://console.cloud.google.com/apis/credentials/oauthclient"),
@@ -132,16 +134,19 @@ def step_google_credentials() -> None:
         time.sleep(2)
 
 
-def step_google_login() -> None:
-    from assistant.google_auth import load_credentials
-
-    if TOKEN.exists():
-        print("✓ Connexion Google déjà faite")
+def step_gmail_addresses(env: dict[str, str]) -> None:
+    if env.get("GMAIL_ADDRESSES"):
         return
-    print("\nUne page Google va s'ouvrir : choisis ton compte et clique « Autoriser ».")
-    print("(Si Google affiche « application non validée » : Paramètres avancés → Accéder.)")
-    load_credentials(CREDENTIALS, TOKEN, interactive=True)
-    print("✓ Google connecté")
+    print("\n— Boîtes mail —")
+    print("La première adresse sert aussi pour l'agenda et les notes.")
+    addresses = input("Tes adresses Gmail, séparées par des virgules : ").replace(" ", "")
+    write_env("GMAIL_ADDRESSES", addresses)
+
+
+def step_google_login() -> None:
+    from google_login import login
+
+    login()
 
 
 def main() -> None:
@@ -150,6 +155,7 @@ def main() -> None:
     token = step_telegram_token(env)
     step_telegram_user(token, env)
     step_google_credentials()
+    step_gmail_addresses(env)
     step_google_login()
     print("\n✓ Tout est prêt. Le bot va démarrer.\n")
 

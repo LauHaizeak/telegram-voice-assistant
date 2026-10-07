@@ -13,6 +13,8 @@ class IntentType(str, Enum):
     ADD_EVENT = "add_event"
     READ_AGENDA = "read_agenda"
     NOTE = "note"
+    READ_MAIL = "read_mail"
+    SEND_MAIL = "send_mail"
     UNKNOWN = "unknown"
 
 
@@ -41,7 +43,7 @@ NUMBER_WORDS = {
 }
 _NUMS = "|".join(sorted(NUMBER_WORDS, key=len, reverse=True))
 
-_POLITE = r"(?:(?:est-ce que tu peux|est ce que tu peux|peux-tu|tu peux|stp|s'il te plait)\s+)?"
+_POLITE = r"(?:(?:euh|heu|alors|bon|ok|okay|ben|salut|bonjour|coucou|hey|dis|assistant)[\s,.!]+)*(?:(?:est-ce que tu peux|est ce que tu peux|est-ce que tu pourrais|tu pourrais|pourrais-tu|peux-tu|tu peux|je veux que tu|j'aimerais que tu|stp|s'il te plait|s'il te plait,)\s+)?"
 
 NOTE_RE = re.compile(
     r"^" + _POLITE +
@@ -54,6 +56,17 @@ READ_RE = re.compile(
     r"qu'est ce que j'ai|qu'ai-je|j'ai quoi|resume|qu'est-ce qu'il y a)\b.*"
     r"\b(?:agenda|programme|planning|rendez-vous|rdv|journee|semaine|prevu|aujourd'hui|demain)\b"
     r"|^(?:mon\s+)?(?:agenda|programme|planning)\b"
+)
+READ_MAIL_RE = re.compile(
+    r"^" + _POLITE +
+    r"(?:lis|lire|montre|donne|dis-moi|dis moi|quels?|"
+    r"qu'est-ce que j'ai|qu'est ce que j'ai|resume|check)\b.*"
+    r"\b(?:mails?|emails?|messages?)\b"
+)
+SEND_MAIL_RE = re.compile(
+    r"^" + _POLITE +
+    r"(?:envoie|envoyer|envoyes|envoyes-moi|envoies)\b.*"
+    r"\b(?:mail|email|message)\b"
 )
 ADD_RE = re.compile(
     r"^" + _POLITE +
@@ -196,6 +209,12 @@ def parse(raw_text: str, now: datetime) -> Intent:
     if note:
         content = t.orig[note.end():].strip(" :,")
         return Intent(IntentType.NOTE, raw_text, title=content[:1].upper() + content[1:])
+
+    if READ_MAIL_RE.search(t.norm):
+        return Intent(IntentType.READ_MAIL, raw_text)
+
+    if SEND_MAIL_RE.search(t.norm):
+        return Intent(IntentType.SEND_MAIL, raw_text)
 
     add = ADD_RE.match(t.norm)
     if add:

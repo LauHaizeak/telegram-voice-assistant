@@ -22,7 +22,8 @@ class Config:
     calendar_id: str
     notes_doc_id: str
     google_credentials_file: Path
-    google_token_file: Path
+    gmail_addresses: tuple[str, ...]
+    ollama_model: str
 
 
 def load_config() -> Config:
@@ -35,6 +36,11 @@ def load_config() -> Config:
         for part in os.getenv("ALLOWED_USER_IDS", "").replace(" ", "").split(",")
         if part
     }
+    gmail_addrs = tuple(dict.fromkeys(
+        part for part in os.getenv("GMAIL_ADDRESSES", "").replace(" ", "").split(",") if part
+    ))
+    if not gmail_addrs:
+        raise SystemExit("GMAIL_ADDRESSES manquant dans .env : la première adresse sert aussi à l'agenda et aux notes.")
     return Config(
         telegram_token=token,
         allowed_user_ids=frozenset(ids),
@@ -45,5 +51,6 @@ def load_config() -> Config:
         calendar_id=os.getenv("GOOGLE_CALENDAR_ID", "primary"),
         notes_doc_id=os.getenv("GOOGLE_NOTES_DOC_ID", "").strip(),
         google_credentials_file=ROOT / os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json"),
-        google_token_file=DATA_DIR / "token.json",
+        gmail_addresses=gmail_addrs,
+        ollama_model=os.getenv("OLLAMA_MODEL", "qwen3.8:27b"),
     )

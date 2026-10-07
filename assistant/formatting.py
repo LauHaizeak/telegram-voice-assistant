@@ -11,11 +11,13 @@ MOIS = [
 ]
 
 HELP = (
-    "Envoie-moi un vocal (ou un texte), par exemple :\n"
-    "• « Ajoute à l'agenda demain à 14h réunion avec Paul »\n"
-    "• « Note que je dois rappeler le garage »\n"
-    "• « Lis mon agenda de demain »\n\n"
-    "Commandes : /agenda (aujourd'hui), /demain, /semaine, /notes"
+    "Parle-moi normalement, en vocal ou en texte, par exemple :\n"
+    "• « Mets-moi un rdv chez le coiffeur jeudi vers 11h »\n"
+    "• « Note qu'il faut racheter des piles »\n"
+    "• « Qu'est-ce que j'ai cette semaine ? »\n"
+    "• « Résume-moi le dernier mail de ma boîte pro »\n"
+    "• « Envoie un mail à Paul pour lui dire que je serai en retard » (rien ne part sans ton accord)\n\n"
+    "Commandes : /agenda, /demain, /semaine, /notes, /mails"
 )
 
 

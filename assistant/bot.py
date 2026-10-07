@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import tempfile
+import uuid
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -17,10 +19,12 @@ from telegram.ext import (
     filters,
 )
 
+from .agent import Agent
 from .calendar_service import CalendarService
 from .config import DATA_DIR, Config
 from .formatting import HELP, format_agenda, format_day, format_time
 from .intents import Intent, IntentType, parse
+from .mail_service import MailService
 from .notes_service import NotesService
 from .transcribe import Transcriber
 
@@ -34,11 +38,16 @@ class Assistant:
         transcriber: Transcriber,
         calendar: CalendarService,
         notes: NotesService,
+        mail: MailService,
+        agent: Agent,
     ) -> None:
         self.config = config
         self.transcriber = transcriber
         self.calendar = calendar
         self.notes = notes
+        self.mail = mail
+        self.agent = agent
+        self.pending_mails: dict[str, dict] = {}
 
     def now(self) -> datetime:
         return datetime.now(self.config.timezone)
@@ -52,9 +61,11 @@ class Assistant:
         app.add_handler(CommandHandler("demain", partial(self.on_agenda, offset=1, days=1), filters=allowed))
         app.add_handler(CommandHandler("semaine", self.on_week, filters=allowed))
         app.add_handler(CommandHandler("notes", self.on_notes, filters=allowed))
+        app.add_handler(CommandHandler("mails", self.on_list_unread_mails, filters=allowed))
         app.add_handler(MessageHandler(allowed & (filters.VOICE | filters.AUDIO), self.on_voice))
         app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, self.on_text))
         app.add_handler(CallbackQueryHandler(self.on_cancel, pattern=r"^cancel:"))
+        app.add_handler(CallbackQueryHandler(self.on_confirm_send, pattern=r"^(send|drop)_mail:"))
         app.add_handler(MessageHandler(filters.ALL, self.on_unauthorized))
         return app
 
@@ -75,6 +86,11 @@ class Assistant:
     async def on_notes(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         url = await asyncio.to_thread(lambda: self.notes.doc_url)
         await update.message.reply_text(f"📝 Tes notes : {url}")
+
+    async def on_list_unread_mails(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        counts = [(a, await asyncio.to_thread(self.mail.get_unread_count, a)) for a in self.config.gmail_addresses]
+        lines = [f"• {address} : {count}" for address, count in counts if count]
+        await update.message.reply_text("📧 Mails non lus :\n" + "\n".join(lines) if lines else "✅ Aucun mail non lu")
 
     async def on_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         media = update.message.voice or update.message.audio
@@ -114,6 +130,29 @@ class Assistant:
             log.warning("Message ignoré d'un utilisateur non autorisé : %s", user.id)
 
     async def _handle(self, update: Update, text: str) -> None:
+        await update.message.chat.send_action(ChatAction.TYPING)
+        try:
+            reply = await asyncio.to_thread(self.agent.run, text, self.now())
+        except Exception:
+            log.exception("Erreur de l'agent sur %r", text)
+            await update.message.reply_text("⚠️ Une erreur est survenue, regarde data\\bot.log.")
+            return
+        if reply is None:
+            log.warning("Ollama indisponible, passage sur les règles")
+            await self._handle_with_rules(update, text)
+            return
+
+        buttons = [[InlineKeyboardButton("Annuler l'événement", callback_data=f"cancel:{eid}")]
+                   for eid in reply.events_added]
+        if reply.mail_draft:
+            draft_id = uuid.uuid4().hex[:12]
+            self.pending_mails[draft_id] = reply.mail_draft
+            buttons.append([InlineKeyboardButton("✉️ Envoyer", callback_data=f"send_mail:{draft_id}"),
+                            InlineKeyboardButton("Ne pas envoyer", callback_data=f"drop_mail:{draft_id}")])
+        await update.message.reply_text(reply.text[:4000],
+                                        reply_markup=InlineKeyboardMarkup(buttons) if buttons else None)
+
+    async def _handle_with_rules(self, update: Update, text: str) -> None:
         intent = parse(text, self.now())
         try:
             if intent.type is IntentType.ADD_EVENT:
@@ -122,6 +161,10 @@ class Assistant:
                 await self._add_note(update, intent)
             elif intent.type is IntentType.READ_AGENDA:
                 await self._send_agenda(update, intent.day, intent.days_span)
+            elif intent.type is IntentType.READ_MAIL:
+                await self._read_mails(update)
+            elif intent.type is IntentType.SEND_MAIL:
+                await update.message.reply_text("L'IA est indisponible pour le moment, je ne peux pas rédiger de mail.")
             else:
                 await update.message.reply_text("Je n'ai pas compris. " + HELP)
         except Exception:
@@ -151,6 +194,38 @@ class Assistant:
         await update.message.reply_text(
             format_agenda(events, first_day, days, self.now().date())
         )
+
+    async def _read_mails(self, update: Update) -> None:
+        lines = []
+        for address in self.config.gmail_addresses:
+            emails = await asyncio.to_thread(self.mail.list_emails, address, 3)
+            lines += [f"\n{address} :"] + [f"• {e.sender[:40]} : {e.subject[:60]}" for e in emails] if emails else []
+        await update.message.reply_text("📧 Derniers non lus :" + "\n".join(lines) if lines else "✅ Aucun mail non lu")
+
+    async def on_confirm_send(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query.from_user.id not in self.config.allowed_user_ids:
+            await query.answer()
+            return
+        action, draft_id = query.data.split(":", 1)
+        draft = self.pending_mails.pop(draft_id, None)
+        if draft is None:
+            await query.answer("Ce brouillon n'existe plus")
+            await query.edit_message_reply_markup(None)
+            return
+        if action == "drop_mail":
+            await query.answer("Pas envoyé")
+            await query.edit_message_text(query.message.text + "\n\n🗑️ Mail non envoyé.")
+            return
+        try:
+            await asyncio.to_thread(self.mail.send_email, draft["boite"], draft["destinataire"],
+                                    draft["objet"], draft["corps"])
+            await query.answer("✅ Mail envoyé")
+            await query.edit_message_text(query.message.text + f"\n\n✅ Envoyé à {draft['destinataire']}.")
+        except Exception:
+            log.exception("Erreur envoi mail")
+            await query.answer("❌ Erreur envoi")
+            await query.edit_message_text(query.message.text + "\n\n❌ Erreur lors de l'envoi")
 
 
 def state_file() -> Path:

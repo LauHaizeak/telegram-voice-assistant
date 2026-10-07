@@ -1,8 +1,14 @@
+# Secrets et données personnelles : ne jamais publier
 .env
-credentials.json
+credentials*.json
+client_secret*.json
+token*.json
 data/
+
+# Environnements et caches
+.venv*/
+venv/
 __pycache__/
 *.pyc
-.venv/
-venv/
 .pytest_cache/
+*.log

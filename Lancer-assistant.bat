@@ -2,7 +2,13 @@
 chcp 65001 >nul
 set PYTHONUTF8=1
 cd /d "%~dp0"
-title Assistant vocal Telegram
+title Installation de l'assistant vocal
+
+where ollama >nul 2>nul
+if errorlevel 1 (
+    echo Ollama n'est pas installe, installation automatique...
+    winget install -e --id Ollama.Ollama --accept-package-agreements --accept-source-agreements
+)
 
 where py >nul 2>nul
 if errorlevel 1 (
@@ -37,5 +43,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-.venv\Scripts\python.exe -m assistant
+powershell -ExecutionPolicy Bypass -File "%~dp0Demarrer-assistant.ps1"
+echo.
+echo L'assistant tourne en arriere-plan. Tu peux fermer cette fenetre.
+echo Pour l'arreter : Arreter-assistant.ps1 (ou le raccourci du Bureau).
 pause
