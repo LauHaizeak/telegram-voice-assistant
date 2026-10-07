@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import tempfile
 import uuid
@@ -28,8 +29,25 @@ from .mail_service import MailService
 from .notes_service import NotesService
 from .sms_service import SmsService
 from .transcribe import Transcriber
+from .voice import Speaker
 
 log = logging.getLogger(__name__)
+SETTINGS_FILE = DATA_DIR / "reglages.json"
+
+
+def _confirmation_text(reply) -> str:
+    parts = []
+    if reply.mail_draft:
+        d = reply.mail_draft
+        parts.append(f"✉️ À : {d['destinataire']}\nObjet : {d['objet']}\n\n{d['corps']}")
+    if reply.sms_draft:
+        d = reply.sms_draft
+        parts.append(f"📱 SMS à {d['nom'] + ' ' if d['nom'] else ''}({d['numero']}) :\n{d['texte']}")
+    if reply.mails_to_trash:
+        parts.append("🗑️ À mettre à la corbeille :\n" + "\n".join(f"• {m['de']} : {m['objet']}" for m in reply.mails_to_trash))
+    if reply.events_added:
+        parts.append("📅 Événement ajouté à l'agenda.")
+    return "\n\n".join(parts)[:4000]
 
 
 class Assistant:
@@ -42,7 +60,13 @@ class Assistant:
         mail: MailService,
         agent: Agent,
         sms: SmsService,
+        speaker: Speaker,
     ) -> None:
+        self.speaker = speaker
+        try:
+            self.settings = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            self.settings = {}
         self.config = config
         self.transcriber = transcriber
         self.calendar = calendar
@@ -67,6 +91,8 @@ class Assistant:
         app.add_handler(CommandHandler("semaine", self.on_week, filters=allowed))
         app.add_handler(CommandHandler("notes", self.on_notes, filters=allowed))
         app.add_handler(CommandHandler("mails", self.on_list_unread_mails, filters=allowed))
+        for mode in ("vocal", "texte", "auto"):
+            app.add_handler(CommandHandler(mode, partial(self.on_reply_mode, mode=mode), filters=allowed))
         app.add_handler(MessageHandler(allowed & (filters.VOICE | filters.AUDIO), self.on_voice))
         app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, self.on_text))
         app.add_handler(CallbackQueryHandler(self.on_cancel, pattern=r"^cancel:"))
@@ -111,7 +137,7 @@ class Assistant:
             await status.edit_text("Je n'ai rien entendu, tu peux répéter ?")
             return
         await status.edit_text(f"🗣️ « {text} »")
-        await self._handle(update, text)
+        await self._handle(update, text, from_voice=True)
 
     async def on_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await self._handle(update, update.message.text)
@@ -136,10 +162,24 @@ class Assistant:
         elif user:
             log.warning("Message ignoré d'un utilisateur non autorisé : %s", user.id)
 
-    async def _handle(self, update: Update, text: str) -> None:
-        await update.message.chat.send_action(ChatAction.TYPING)
+    def _wants_voice(self, from_voice: bool) -> bool:
+        mode = self.settings.get("reponse", self.config.voice_replies)
+        return mode == "vocal" or (mode == "auto" and from_voice)
+
+    async def on_reply_mode(self, update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str) -> None:
+        self.settings["reponse"] = mode
+        SETTINGS_FILE.write_text(json.dumps(self.settings), encoding="utf-8")
+        await update.message.reply_text({
+            "vocal": "🔊 Je réponds maintenant toujours en vocal.",
+            "texte": "💬 Je réponds maintenant toujours par écrit.",
+            "auto": "🔁 Je réponds en vocal à tes vocaux et par écrit à tes messages écrits.",
+        }[mode])
+
+    async def _handle(self, update: Update, text: str, from_voice: bool = False) -> None:
+        oral = self._wants_voice(from_voice)
+        await update.message.chat.send_action(ChatAction.RECORD_VOICE if oral else ChatAction.TYPING)
         try:
-            reply = await asyncio.to_thread(self.agent.run, text, self.now())
+            reply = await asyncio.to_thread(self.agent.run, text, self.now(), oral)
         except Exception:
             log.exception("Erreur de l'agent sur %r", text)
             await update.message.reply_text("⚠️ Une erreur est survenue, regarde data\\bot.log.")
@@ -167,8 +207,18 @@ class Assistant:
             label = "🗑️ Corbeille" if len(reply.mails_to_trash) == 1 else f"🗑️ Corbeille ({len(reply.mails_to_trash)})"
             buttons.append([InlineKeyboardButton(label, callback_data=f"trash_mails:{trash_id}"),
                             InlineKeyboardButton("Garder", callback_data=f"keep_mails:{trash_id}")])
-        await update.message.reply_text(reply.text[:4000],
-                                        reply_markup=InlineKeyboardMarkup(buttons) if buttons else None)
+        markup = InlineKeyboardMarkup(buttons) if buttons else None
+        if oral:
+            try:
+                audio = await asyncio.to_thread(self.speaker.speak, reply.text)
+                await update.message.reply_voice(audio)
+                if markup:
+                    # Les boutons restent en texte sous le vocal, avec ce qui va réellement partir
+                    await update.message.reply_text(_confirmation_text(reply), reply_markup=markup)
+                return
+            except Exception:
+                log.exception("Synthèse vocale impossible, réponse par écrit")
+        await update.message.reply_text(reply.text[:4000], reply_markup=markup)
 
     async def _handle_with_rules(self, update: Update, text: str) -> None:
         intent = parse(text, self.now())

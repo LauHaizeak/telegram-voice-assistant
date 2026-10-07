@@ -71,6 +71,15 @@ def test_unknown_mail_reference_does_nothing():
     assert "inconnues" in result and mail.done == []
 
 
+def test_long_tool_results_are_trimmed_but_the_question_is_kept():
+    question = {"role": "user", "content": "résume mes mails"}
+    messages = [{"role": "system", "content": "x" * 3000}, question,
+                {"role": "tool", "content": "a" * 40000}, {"role": "tool", "content": "b" * 20000}]
+    Agent._fit_context(messages)
+    assert sum(len(m["content"]) for m in messages) <= 30000
+    assert question in messages and messages[1]["content"] == "résume mes mails"
+
+
 def test_system_prompt_gives_the_real_weekdays():
     prompt = make_agent()._system_prompt(NOW)
     assert "mercredi 2026-10-07 (aujourd'hui)" in prompt

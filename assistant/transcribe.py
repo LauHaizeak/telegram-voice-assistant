@@ -3,13 +3,36 @@ from __future__ import annotations
 import gc
 import logging
 import os
+import subprocess
 import sys
 import threading
 from pathlib import Path
 
+import requests
+
 log = logging.getLogger(__name__)
 
 UNLOAD_AFTER_SECONDS = 300
+WHISPER_NEEDS_MB = 5000
+OLLAMA_URL = "http://localhost:11434"
+
+
+def gpu_free_mb() -> int | None:
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=5).stdout
+        return int(out.split()[0])
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
+def unload_ollama_models() -> None:
+    """Libère la carte graphique : Ollama rechargera le modèle à la prochaine demande."""
+    try:
+        for model in requests.get(f"{OLLAMA_URL}/api/ps", timeout=5).json().get("models", []):
+            requests.post(f"{OLLAMA_URL}/api/generate", json={"model": model["name"], "keep_alive": 0}, timeout=30)
+    except requests.RequestException as e:
+        log.warning("Impossible de décharger Ollama : %s", e)
 
 
 def _register_windows_cuda_dlls() -> None:
@@ -40,6 +63,12 @@ class Transcriber:
 
     def _load(self) -> None:
         from faster_whisper import WhisperModel
+
+        if self._device == "cuda":
+            free = gpu_free_mb()
+            if free is not None and free < WHISPER_NEEDS_MB:
+                log.warning("Carte graphique presque pleine (%s Mo libres) : je décharge l'IA d'Ollama", free)
+                unload_ollama_models()
 
         log.info("Chargement de Whisper %s sur %s (%s)…", self._model_name, self._device, self._compute_type)
         try:

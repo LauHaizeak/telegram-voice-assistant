@@ -10,6 +10,7 @@ from .mail_service import MailService
 from .notes_service import NotesService
 from .sms_service import SmsService
 from .transcribe import Transcriber
+from .voice import Speaker
 
 
 def build_services():
@@ -42,7 +43,8 @@ def main() -> None:
 
     config, calendar, notes, mail, agent, sms = build_services()
     transcriber = Transcriber(config.whisper_model, config.whisper_device, config.whisper_compute_type)
-    assistant = Assistant(config, transcriber, calendar, notes, mail, agent, sms)
+    speaker = Speaker(DATA_DIR / "voix", config.voice_name)
+    assistant = Assistant(config, transcriber, calendar, notes, mail, agent, sms, speaker)
     logging.info("Bot démarré (IA : %s, SMS : %s). Ctrl+C pour arrêter.",
                  config.ollama_model, "oui" if sms.configured else "non configuré")
     assistant.build_app().run_polling()

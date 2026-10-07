@@ -76,6 +76,14 @@ TOOLS = [
 
 CONVERSATION_TIMEOUT = timedelta(minutes=30)
 TURNS_KEPT = 4
+MAIL_TEXT_BUDGET = 12000  # caractères de contenu de mails par recherche
+NUM_CTX = 16384
+ORAL_STYLE = (
+    "\nTa réponse va être lue à voix haute à Kevin, comme au téléphone : deux à quatre phrases courtes et "
+    "naturelles, sans liste, sans tiret, sans émoji, sans lien ni adresse mail en entier. Pour plusieurs mails, "
+    "donne l'essentiel et propose d'en dire plus. Écris les heures et les nombres comme on les dit."
+)
+CONTEXT_CHARS = 30000  # ~11 000 tokens en français : laisse la place aux outils et à la réponse
 
 
 def _calls_written_as_text(content: str) -> list[dict]:
@@ -118,6 +126,7 @@ class Agent:
         self._turns: list[list[dict]] = []
         self._refs: dict[str, dict] = {}
         self._last_message: datetime | None = None
+        self._oral = False
 
     def _system_prompt(self, now: datetime) -> str:
         days = "\n".join(
@@ -146,10 +155,12 @@ class Agent:
             "Ta réponse est lue dans Telegram : texte simple, sans astérisques, sans titres ni mise en forme "
             "Markdown, avec au plus quelques tirets.\n"
             "Si la demande n'a rien à voir avec tes outils, réponds simplement."
+            + (ORAL_STYLE if self._oral else "")
         )
 
-    def run(self, text: str, now: datetime) -> AgentReply | None:
+    def run(self, text: str, now: datetime, oral: bool = False) -> AgentReply | None:
         """Renvoie None si Ollama est indisponible (le bot passe alors sur les règles)."""
+        self._oral = oral
         if self._last_message and now - self._last_message > CONVERSATION_TIMEOUT:
             self._turns, self._refs = [], {}
         self._last_message = now
@@ -187,21 +198,36 @@ class Agent:
         # Les contenus de mails déjà lus sont raccourcis pour ne pas saturer la mémoire du modèle
         for older in self._turns:
             for m in older:
-                if m["role"] == "tool" and len(m["content"]) > 1200:
-                    m["content"] = m["content"][:1200] + " […]"
+                if m["role"] == "tool" and len(m["content"]) > 2500:
+                    m["content"] = m["content"][:2500] + " […]"
         self._turns = (self._turns + [turn])[-TURNS_KEPT:]
 
+    @staticmethod
+    def _fit_context(messages: list[dict]) -> None:
+        """Ollama coupe le début d'une conversation trop longue et perd alors la question : on raccourcit les
+        résultats d'outils les plus longs jusqu'à tenir dans la fenêtre du modèle."""
+        while sum(len(m.get("content") or "") for m in messages) > CONTEXT_CHARS:
+            longest = max((m for m in messages if m["role"] == "tool"), key=lambda m: len(m["content"]), default=None)
+            if longest is None or len(longest["content"]) < 600:
+                return
+            longest["content"] = longest["content"][: len(longest["content"]) // 2] + " […]"
+
     def _chat(self, messages: list[dict]) -> dict | None:
-        try:
-            r = requests.post(OLLAMA_CHAT_URL, json={
-                "model": self.model, "messages": messages, "tools": TOOLS, "stream": False, "think": False,
-                "keep_alive": "5m", "options": {"temperature": 0.2, "num_ctx": 16384},
-            }, timeout=180)
-            r.raise_for_status()
-            return r.json()["message"]
-        except (requests.ConnectionError, requests.Timeout) as e:
-            log.error("Ollama indisponible : %s", e)
-            return None
+        self._fit_context(messages)
+        for attempt in range(2):
+            try:
+                r = requests.post(OLLAMA_CHAT_URL, json={
+                    "model": self.model, "messages": messages, "tools": TOOLS, "stream": False, "think": False,
+                    "keep_alive": "5m", "options": {"temperature": 0.2, "num_ctx": NUM_CTX},
+                }, timeout=180)
+                if r.ok:
+                    return r.json()["message"]
+                # Ollama renvoie parfois une erreur 500 passagère (appel d'outil mal formé, chargement en cours)
+                log.warning("Ollama a répondu %s : %s", r.status_code, r.text[:300])
+            except (requests.ConnectionError, requests.Timeout) as e:
+                log.error("Ollama indisponible : %s", e)
+                return None
+        return None
 
     def _execute(self, name: str, args: dict, reply: AgentReply) -> str:
         if name == "chercher_mails":
@@ -283,13 +309,16 @@ class Agent:
         count = max(1, min(int(args.get("nombre") or 5), 10))
         query = (args.get("recherche") or "").strip() or "in:inbox"
         accounts = self._resolve(args.get("boite"))
+        found = [(account, e) for account in accounts for e in self.mail.list_emails(account, count, query=query)]
+        if not found:
+            return f"Aucun mail trouvé ({query}) dans {', '.join(accounts)}."
+        # Au-delà de ~16 000 tokens, Ollama coupe le début de la conversation et perd la question de Kevin
+        body_limit = max(300, min(3000, MAIL_TEXT_BUDGET // len(found)))
         blocks = []
-        for account in accounts:
-            emails = self.mail.list_emails(account, count, query=query)
-            for e in emails:
-                ref = next((r for r, m in self._refs.items() if m["id"] == e.id), f"M{len(self._refs) + 1}")
-                self._refs[ref] = {"boite": account, "id": e.id, "objet": e.subject, "de": e.sender}
-                body = self.mail.get_body(account, e.id, limit=1500 if count > 3 else 3000)
-                blocks.append(f"Réf {ref} [{account}] De : {e.sender} | Objet : {e.subject} | "
-                              f"Reçu : {e.timestamp:%Y-%m-%d %H:%M} | {'lu' if e.is_read else 'non lu'}\n{body}")
-        return "\n\n".join(blocks) or f"Aucun mail trouvé ({query}) dans {', '.join(accounts)}."
+        for account, e in found:
+            ref = next((r for r, m in self._refs.items() if m["id"] == e.id), f"M{len(self._refs) + 1}")
+            self._refs[ref] = {"boite": account, "id": e.id, "objet": e.subject, "de": e.sender}
+            body = self.mail.get_body(account, e.id, limit=body_limit)
+            blocks.append(f"Réf {ref} [{account}] De : {e.sender} | Objet : {e.subject} | "
+                          f"Reçu : {e.timestamp:%Y-%m-%d %H:%M} | {'lu' if e.is_read else 'non lu'}\n{body}")
+        return "\n\n".join(blocks)

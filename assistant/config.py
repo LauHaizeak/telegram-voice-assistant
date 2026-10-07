@@ -27,6 +27,8 @@ class Config:
     sms_gateway_url: str
     sms_gateway_user: str
     sms_gateway_password: str
+    voice_name: str
+    voice_replies: str
 
 
 def load_config() -> Config:
@@ -44,6 +46,10 @@ def load_config() -> Config:
     ))
     if not gmail_addrs:
         raise SystemExit("GMAIL_ADDRESSES manquant dans .env : la première adresse sert aussi à l'agenda et aux notes.")
+    # texte : toujours par écrit, la voix ne se charge jamais ; auto : vocal si on lui parle en vocal ; vocal : toujours
+    voice_replies = os.getenv("VOICE_REPLIES", "texte").strip().lower()
+    if voice_replies not in ("auto", "vocal"):
+        voice_replies = "texte"
     return Config(
         telegram_token=token,
         allowed_user_ids=frozenset(ids),
@@ -59,4 +65,6 @@ def load_config() -> Config:
         sms_gateway_url=os.getenv("SMS_GATEWAY_URL", "").strip(),
         sms_gateway_user=os.getenv("SMS_GATEWAY_USER", "sms").strip(),
         sms_gateway_password=os.getenv("SMS_GATEWAY_PASSWORD", "").strip(),
+        voice_name=os.getenv("VOICE_NAME", "fr_FR-siwis-medium").strip(),
+        voice_replies=voice_replies,
     )

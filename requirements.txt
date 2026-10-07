@@ -9,3 +9,4 @@ pytest>=8.3
 
 tzdata
 av<17
+piper-tts>=1.3
