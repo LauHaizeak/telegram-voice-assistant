@@ -48,6 +48,7 @@ class Assistant:
         self.mail = mail
         self.agent = agent
         self.pending_mails: dict[str, dict] = {}
+        self.pending_trash: dict[str, list[dict]] = {}
 
     def now(self) -> datetime:
         return datetime.now(self.config.timezone)
@@ -66,6 +67,7 @@ class Assistant:
         app.add_handler(MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, self.on_text))
         app.add_handler(CallbackQueryHandler(self.on_cancel, pattern=r"^cancel:"))
         app.add_handler(CallbackQueryHandler(self.on_confirm_send, pattern=r"^(send|drop)_mail:"))
+        app.add_handler(CallbackQueryHandler(self.on_confirm_trash, pattern=r"^(trash|keep)_mails:"))
         app.add_handler(MessageHandler(filters.ALL, self.on_unauthorized))
         return app
 
@@ -149,6 +151,12 @@ class Assistant:
             self.pending_mails[draft_id] = reply.mail_draft
             buttons.append([InlineKeyboardButton("✉️ Envoyer", callback_data=f"send_mail:{draft_id}"),
                             InlineKeyboardButton("Ne pas envoyer", callback_data=f"drop_mail:{draft_id}")])
+        if reply.mails_to_trash:
+            trash_id = uuid.uuid4().hex[:12]
+            self.pending_trash[trash_id] = reply.mails_to_trash
+            label = "🗑️ Corbeille" if len(reply.mails_to_trash) == 1 else f"🗑️ Corbeille ({len(reply.mails_to_trash)})"
+            buttons.append([InlineKeyboardButton(label, callback_data=f"trash_mails:{trash_id}"),
+                            InlineKeyboardButton("Garder", callback_data=f"keep_mails:{trash_id}")])
         await update.message.reply_text(reply.text[:4000],
                                         reply_markup=InlineKeyboardMarkup(buttons) if buttons else None)
 
@@ -226,6 +234,33 @@ class Assistant:
             log.exception("Erreur envoi mail")
             await query.answer("❌ Erreur envoi")
             await query.edit_message_text(query.message.text + "\n\n❌ Erreur lors de l'envoi")
+
+
+    async def on_confirm_trash(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query.from_user.id not in self.config.allowed_user_ids:
+            await query.answer()
+            return
+        action, trash_id = query.data.split(":", 1)
+        mails = self.pending_trash.pop(trash_id, None)
+        if mails is None:
+            await query.answer("Déjà traité")
+            await query.edit_message_reply_markup(None)
+            return
+        if action == "keep_mails":
+            await query.answer("Gardé")
+            await query.edit_message_text(query.message.text + "\n\n👍 Rien n'a été supprimé.")
+            return
+        try:
+            for m in mails:
+                await asyncio.to_thread(self.mail.trash, m["boite"], m["id"])
+            await query.answer("Mis à la corbeille")
+            await query.edit_message_text(
+                query.message.text + f"\n\n🗑️ {len(mails)} mail(s) à la corbeille (récupérable 30 jours dans Gmail).")
+        except Exception:
+            log.exception("Erreur corbeille")
+            await query.answer("❌ Erreur")
+            await query.edit_message_text(query.message.text + "\n\n❌ La mise à la corbeille a échoué.")
 
 
 def state_file() -> Path:

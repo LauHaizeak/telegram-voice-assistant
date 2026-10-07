@@ -64,6 +64,16 @@ class MailService:
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
         return self._messages(address).send(userId="me", body={"raw": raw}).execute()["id"]
 
+    def trash(self, address: str, message_id: str) -> None:
+        """Corbeille Gmail : récupérable pendant 30 jours."""
+        self._messages(address).trash(userId="me", id=message_id).execute()
+
+    def archive(self, address: str, message_id: str) -> None:
+        self._messages(address).modify(userId="me", id=message_id, body={"removeLabelIds": ["INBOX"]}).execute()
+
+    def mark_read(self, address: str, message_id: str) -> None:
+        self._messages(address).modify(userId="me", id=message_id, body={"removeLabelIds": ["UNREAD"]}).execute()
+
     def _details(self, address: str, message_id: str) -> Email:
         msg = self._messages(address).get(
             userId="me", id=message_id, format="metadata", metadataHeaders=["from", "subject"]

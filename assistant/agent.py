@@ -29,8 +29,8 @@ def _tool(name: str, description: str, properties: dict, required: list[str] | N
 
 TOOLS = [
     _tool("chercher_mails",
-          "Cherche des mails dans les boîtes Gmail de Kevin et renvoie expéditeur, objet, date et contenu. "
-          "Utilise-le pour lire, résumer ou retrouver des mails.",
+          "Cherche des mails dans les boîtes Gmail de Kevin et renvoie, pour chacun, une référence (M1, M2…), "
+          "l'expéditeur, l'objet, la date et le contenu. Utilise-le pour lire, résumer ou retrouver des mails.",
           {"boite": {"type": "string", "description": "Adresse de la boîte, ou vide pour toutes les boîtes"},
            "recherche": {"type": "string", "description": "Requête de recherche Gmail, par exemple 'is:unread', "
                          "'from:paul', 'newer_than:2d', 'subject:facture'. Vide = tous les mails récents."},
@@ -52,7 +52,17 @@ TOOLS = [
            "destinataire": {"type": "string", "description": "Adresse mail du destinataire"},
            "objet": {"type": "string"}, "corps": {"type": "string"}},
           ["destinataire", "objet", "corps"]),
+    _tool("gerer_mails",
+          "Agit sur des mails déjà trouvés avec chercher_mails, désignés par leurs références (M1, M2…). "
+          "« corbeille » demande d'abord la confirmation de Kevin avec un bouton (récupérable 30 jours dans "
+          "la corbeille Gmail) ; « archiver » et « marquer_lu » sont faits tout de suite.",
+          {"action": {"type": "string", "enum": ["corbeille", "archiver", "marquer_lu"]},
+           "references": {"type": "array", "items": {"type": "string"}, "description": "Par exemple ['M1']"}},
+          ["action", "references"]),
 ]
+
+CONVERSATION_TIMEOUT = timedelta(minutes=30)
+TURNS_KEPT = 4
 
 
 def _calls_written_as_text(content: str) -> list[dict]:
@@ -74,9 +84,12 @@ class AgentReply:
     text: str
     events_added: list[str] = field(default_factory=list)
     mail_draft: dict | None = None
+    mails_to_trash: list[dict] = field(default_factory=list)
 
 
 class Agent:
+    """Une seule conversation (Kevin), oubliée après 30 min sans message."""
+
     def __init__(self, calendar: CalendarService, notes: NotesService, mail: MailService,
                  addresses: list[str], tz, model: str) -> None:
         self.calendar = calendar
@@ -85,6 +98,9 @@ class Agent:
         self.addresses = addresses
         self.tz = tz
         self.model = model
+        self._turns: list[list[dict]] = []
+        self._refs: dict[str, dict] = {}
+        self._last_message: datetime | None = None
 
     def _system_prompt(self, now: datetime) -> str:
         days = "\n".join(
@@ -103,6 +119,9 @@ class Agent:
             "résumé ou détail, boîte, période). Ne recopie jamais un mail brut : résume-le.\n"
             "Ne dis jamais qu'une action est faite (note, événement, mail) sans avoir appelé l'outil "
             "correspondant dans ce tour.\n"
+            "Tu te souviens des échanges récents : « ce mail », « celui d'avant », « les deux premiers » "
+            "désignent des mails déjà trouvés, utilise leurs références M1, M2… sans refaire de recherche. "
+            "Ne montre pas ces références à Kevin.\n"
             "N'invente jamais d'adresse mail. Si tu ne connais pas l'adresse du destinataire, cherche-la "
             "d'abord dans ses mails (chercher_mails avec 'from:prénom' ou 'to:prénom'), et demande-la seulement "
             "si tu ne la trouves pas.\n"
@@ -113,16 +132,22 @@ class Agent:
 
     def run(self, text: str, now: datetime) -> AgentReply | None:
         """Renvoie None si Ollama est indisponible (le bot passe alors sur les règles)."""
-        messages = [{"role": "system", "content": self._system_prompt(now)}, {"role": "user", "content": text}]
+        if self._last_message and now - self._last_message > CONVERSATION_TIMEOUT:
+            self._turns, self._refs = [], {}
+        self._last_message = now
+        turn = [{"role": "user", "content": text}]
         reply = AgentReply(text="")
         for _ in range(MAX_STEPS):
+            history = [m for t in self._turns[-TURNS_KEPT:] for m in t]
+            messages = [{"role": "system", "content": self._system_prompt(now)}] + history + turn
             message = self._chat(messages)
             if message is None:
                 return None
-            messages.append(message)
+            turn.append(message)
             calls = message.get("tool_calls") or _calls_written_as_text(message.get("content") or "")
             if not calls:
                 reply.text = (message.get("content") or "").strip() or "C'est fait."
+                self._remember(turn)
                 return reply
             for call in calls:
                 name = call["function"]["name"]
@@ -135,9 +160,18 @@ class Agent:
                 except Exception as e:
                     log.exception("Erreur outil %s", name)
                     result = f"Erreur : {e}"
-                messages.append({"role": "tool", "tool_name": name, "content": result})
+                turn.append({"role": "tool", "tool_name": name, "content": result})
         reply.text = "Je n'ai pas réussi à aller au bout, tu peux reformuler ?"
+        self._remember(turn)
         return reply
+
+    def _remember(self, turn: list[dict]) -> None:
+        # Les contenus de mails déjà lus sont raccourcis pour ne pas saturer la mémoire du modèle
+        for older in self._turns:
+            for m in older:
+                if m["role"] == "tool" and len(m["content"]) > 1200:
+                    m["content"] = m["content"][:1200] + " […]"
+        self._turns = (self._turns + [turn])[-TURNS_KEPT:]
 
     def _chat(self, messages: list[dict]) -> dict | None:
         try:
@@ -178,7 +212,29 @@ class Agent:
                                 "objet": args["objet"], "corps": args["corps"]}
             return (f"Brouillon prêt depuis {account}, en attente de la confirmation de Kevin. "
                     "Montre-lui le destinataire, l'objet et le texte, et dis-lui d'appuyer sur Envoyer.")
+        if name == "gerer_mails":
+            return self._manage_mails(args, reply)
         return f"Outil inconnu : {name}"
+
+    def _manage_mails(self, args: dict, reply: AgentReply) -> str:
+        refs = [r.strip().upper() for r in args.get("references") or []]
+        unknown = [r for r in refs if r not in self._refs]
+        if unknown or not refs:
+            return f"Références inconnues : {', '.join(unknown) or 'aucune'}. Cherche d'abord les mails."
+        mails = [self._refs[r] for r in refs]
+        action = args.get("action")
+        if action == "corbeille":
+            reply.mails_to_trash.extend(mails)
+            return ("En attente de la confirmation de Kevin : dis-lui quels mails vont à la corbeille "
+                    "et qu'il doit appuyer sur le bouton.")
+        for m in mails:
+            if action == "archiver":
+                self.mail.archive(m["boite"], m["id"])
+            elif action == "marquer_lu":
+                self.mail.mark_read(m["boite"], m["id"])
+            else:
+                return f"Action inconnue : {action}"
+        return f"Fait ({action}) pour {len(mails)} mail(s)."
 
     def _resolve(self, wanted: str | None) -> list[str]:
         if not wanted:
@@ -195,7 +251,9 @@ class Agent:
         for account in accounts:
             emails = self.mail.list_emails(account, count, query=query)
             for e in emails:
+                ref = next((r for r, m in self._refs.items() if m["id"] == e.id), f"M{len(self._refs) + 1}")
+                self._refs[ref] = {"boite": account, "id": e.id, "objet": e.subject, "de": e.sender}
                 body = self.mail.get_body(account, e.id, limit=1500 if count > 3 else 3000)
-                blocks.append(f"[{account}] De : {e.sender} | Objet : {e.subject} | "
+                blocks.append(f"Réf {ref} [{account}] De : {e.sender} | Objet : {e.subject} | "
                               f"Reçu : {e.timestamp:%Y-%m-%d %H:%M} | {'lu' if e.is_read else 'non lu'}\n{body}")
         return "\n\n".join(blocks) or f"Aucun mail trouvé ({query}) dans {', '.join(accounts)}."
